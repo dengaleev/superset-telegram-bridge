@@ -4,10 +4,11 @@ import os
 SECRET_KEY = os.environ.get("SUPERSET_SECRET_KEY", "playground-dev-secret-change-me")
 SQLALCHEMY_DATABASE_URI = "postgresql+psycopg2://superset:superset@postgres:5432/superset"
 
-# ALERT_REPORTS enables Alerts & Reports; ALERT_REPORT_WEBHOOK enables the
-# Webhook notification method (the notifier refuses to send without it);
-# ALERTS_ATTACH_REPORTS lets alerts (not just reports) attach files like the CSV.
-FEATURE_FLAGS = {"ALERT_REPORTS": True, "ALERT_REPORT_WEBHOOK": True, "ALERTS_ATTACH_REPORTS": True}
+FEATURE_FLAGS = {
+    "ALERT_REPORTS": True,           # Alerts & Reports
+    "ALERT_REPORT_WEBHOOK": True,    # the Webhook notification method (required, or it won't send)
+    "ALERTS_ATTACH_REPORTS": True,   # let alerts (not just reports) attach files — for the CSV alert
+}
 
 # Allow the plain-HTTP bridge URL (defaults to HTTPS-only).
 ALERT_REPORTS_WEBHOOK_HTTPS_ONLY = False
@@ -32,5 +33,5 @@ class CeleryConfig:
 
 CELERY_CONFIG = CeleryConfig
 
-# Uncomment to make Superset sign the webhook (X-Webhook-Signature) for Phase 3 capture.
+# Uncomment to make Superset sign the webhook (X-Webhook-Signature) for Phase 4 capture.
 # WEBHOOK_SECRET = "playground-webhook-secret"

@@ -5,6 +5,6 @@ packages:
       dir: "{{.InterfaceDir}}/mocks"
       outpkg: mocks
       mockname: "Mock{{.InterfaceName}}"
-      filename: "{{.InterfaceName}}.go"
+      filename: "sender.go"
     interfaces:
       Sender:
