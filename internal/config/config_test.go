@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,28 @@ func TestLoadMissingRequired(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() error = nil, want error for missing vars")
 	}
+	// The error must list every missing variable, not just the first.
+	for _, want := range []string{"TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention missing var %q", err, want)
+		}
+	}
+}
+
+func TestLoadMissingOneRequired(t *testing.T) {
+	t.Setenv("TELEGRAM_TOKEN", "tok")
+	t.Setenv("TELEGRAM_CHAT_ID", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want error for missing TELEGRAM_CHAT_ID")
+	}
+	if !strings.Contains(err.Error(), "TELEGRAM_CHAT_ID") {
+		t.Errorf("error %q does not mention missing var TELEGRAM_CHAT_ID", err)
+	}
+	if strings.Contains(err.Error(), "TELEGRAM_TOKEN") {
+		t.Errorf("error %q mentions TELEGRAM_TOKEN, which was set", err)
+	}
 }
 
 func TestLoadInvalidLogLevel(t *testing.T) {
@@ -64,5 +87,8 @@ func TestLoadInvalidLogLevel(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("Load() error = nil, want error for invalid LOG_LEVEL")
+	}
+	if !strings.Contains(err.Error(), "loud") {
+		t.Errorf("error %q does not mention the invalid value %q", err, "loud")
 	}
 }
