@@ -2,6 +2,7 @@ package webhook_test
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime/multipart"
@@ -52,6 +53,14 @@ func (s *stub) calls() []string {
 
 type superFile struct{ name, mime string }
 
+func pngFiles(n int) []superFile {
+	out := make([]superFile, n)
+	for i := range out {
+		out[i] = superFile{fmt.Sprintf("screenshot_%d.png", i), "image/png"}
+	}
+	return out
+}
+
 func multipartBody(t *testing.T, fields map[string]string, files []superFile) (string, []byte) {
 	t.Helper()
 	var buf bytes.Buffer
@@ -98,6 +107,8 @@ func TestHandlerRouting(t *testing.T) {
 		{name: "two png -> sendMediaGroup", files: []superFile{{"screenshot_0.png", "image/png"}, {"screenshot_1.png", "image/png"}}, wantCode: 204, wantMethods: []string{"sendMediaGroup"}},
 		{name: "one pdf -> sendDocument", files: []superFile{{"report.pdf", "application/pdf"}}, wantCode: 204, wantMethods: []string{"sendDocument"}},
 		{name: "one csv -> sendDocument", files: []superFile{{"report.csv", "text/csv"}}, wantCode: 204, wantMethods: []string{"sendDocument"}},
+		{name: "mixed png+pdf -> photo then document", files: []superFile{{"screenshot_0.png", "image/png"}, {"report.pdf", "application/pdf"}}, wantCode: 204, wantMethods: []string{"sendPhoto", "sendDocument"}},
+		{name: "eleven png -> single album, overflow dropped", files: pngFiles(11), wantCode: 204, wantMethods: []string{"sendMediaGroup"}},
 	}
 
 	for _, tt := range tests {

@@ -89,7 +89,8 @@ func forward(ctx context.Context, tg *telegram.Client, chatID string, logger *sl
 }
 
 // sendGroup sends one MIME class: a single photo/document, or an album of 2..N.
-// Telegram albums cap at MaxMediaGroup, so any overflow is dropped (and logged).
+// kind is "photo" or "document" (set by the caller's MIME split) and selects the
+// single-send method. Telegram albums cap at MaxMediaGroup, so overflow is dropped.
 func sendGroup(ctx context.Context, tg *telegram.Client, chatID, caption, kind string, files []telegram.Media, logger *slog.Logger) error {
 	if len(files) > telegram.MaxMediaGroup {
 		logger.WarnContext(ctx, "dropping attachments over Telegram album limit",
