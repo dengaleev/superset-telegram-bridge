@@ -1,0 +1,34 @@
+version: 2
+project_name: superset-telegram-bridge
+
+builds:
+  - id: bridge
+    main: ./cmd/superset-telegram-bridge
+    binary: superset-telegram-bridge
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+dockers_v2:
+  - id: bridge
+    ids:
+      - bridge
+    dockerfile: Dockerfile
+    images:
+      - ghcr.io/dengaleev/superset-telegram-bridge
+    tags:
+      - "{{ .Version }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+
+archives:
+  - formats:
+      - tar.gz
