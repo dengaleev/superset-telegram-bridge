@@ -15,6 +15,7 @@ import (
 
 	"github.com/dengaleev/superset-telegram-bridge/internal/config"
 	"github.com/dengaleev/superset-telegram-bridge/internal/telegram"
+	"github.com/dengaleev/superset-telegram-bridge/internal/webhook"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -39,7 +40,7 @@ func run() error {
 	tg := telegram.New(cfg.TelegramToken, logger)
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /webhook", webhookHandler(tg, cfg.TelegramChatID, logger))
+	mux.Handle("POST /webhook", webhook.Handler(tg, cfg.TelegramChatID, logger))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})

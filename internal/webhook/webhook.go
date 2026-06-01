@@ -1,4 +1,6 @@
-package main
+// Package webhook is the HTTP boundary: it turns an inbound Superset webhook
+// request into a Telegram message.
+package webhook
 
 import (
 	"errors"
@@ -11,13 +13,12 @@ import (
 	"github.com/dengaleev/superset-telegram-bridge/internal/telegram"
 )
 
-// maxBodyBytes caps the inbound webhook body size.
+// maxBodyBytes bounds request bodies so a hostile caller can't exhaust memory.
 const maxBodyBytes = 1 << 20 // 1 MiB
 
-// webhookHandler returns the POST /webhook handler. It reads the raw body
-// (kept raw so HMAC verification can hook in during Phase 3), parses the
-// Superset payload, renders it, and forwards it to Telegram.
-func webhookHandler(tg *telegram.Client, chatID string, logger *slog.Logger) http.HandlerFunc {
+// Handler returns the POST /webhook handler. The raw body is read before
+// parsing so HMAC verification can hook in during Phase 3 without restructuring.
+func Handler(tg *telegram.Client, chatID string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
