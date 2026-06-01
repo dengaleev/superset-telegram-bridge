@@ -6,22 +6,21 @@
 [![Release](https://img.shields.io/github/v/release/dengaleev/superset-telegram-bridge?sort=semver)](https://github.com/dengaleev/superset-telegram-bridge/releases)
 [![License: MIT](https://img.shields.io/github/license/dengaleev/superset-telegram-bridge)](LICENSE)
 
-A tiny, single-binary service that forwards [Apache Superset](https://superset.apache.org/) alert and report notifications to a Telegram chat.
+A single-binary service that forwards [Apache Superset](https://superset.apache.org/) alert and report notifications to a Telegram chat.
 
-Superset can POST notifications to a webhook URL. This bridge receives that webhook, renders it as a clean Telegram message with an inline **Open in Superset** link, forwards any attachments as photos or documents, and delivers everything via the Telegram Bot API — so your team gets Superset alerts where it already talks.
+Superset can POST notifications to a webhook URL. This bridge receives that webhook, turns it into a Telegram message with an inline "Open in Superset" link, forwards any attachments as photos or documents, and sends it through the Telegram Bot API.
 
 ```
 Superset  ──POST /webhook──▶  superset-telegram-bridge  ──Bot API──▶  Telegram chat
 ```
 
-## Features
+## What it does
 
-- **Single static binary** — no runtime dependencies; ships as a distroless, non-root container image (under 10 MB: a ~7 MB CGO-free binary on a `static:nonroot` base).
-- **Clean messages** — HTML-formatted title (bold), body, and description (italic), with an inline **Open in Superset** link back to the chart or dashboard; link previews are disabled on text messages.
-- **Attachment forwarding** — Superset report screenshots (`image/png`) are sent as Telegram photos and other files (CSV, PDF, …) as documents; two or more of a kind become an album, with the notification text as the caption.
-- **Resilient delivery** — transport-level failures are retried once after a short fixed delay (a non-2xx response is surfaced immediately); the Telegram bot token is stripped from transport errors before they are logged or returned.
-- **Operationally boring** — structured JSON logging (`slog`), a `GET /healthz` endpoint, graceful shutdown, and a request body bounded to 50 MiB.
-- **Multi-arch** — `linux/amd64` and `linux/arm64` images published to GHCR on every release.
+- Formats text notifications as HTML Telegram messages — bold title, italic description, an inline "Open in Superset" link, link previews off.
+- Forwards report attachments: `image/png` files go as photos, other files (CSV, PDF, …) as documents. Several files of one kind are grouped into an album, with the notification text as the caption.
+- Retries a failed send once after a short fixed delay; a non-2xx response is returned as-is. The bot token is stripped from transport errors before they're logged.
+- Logs JSON via `slog`, serves `GET /healthz`, shuts down gracefully, and caps the request body at 50 MiB.
+- Builds to a static, non-root distroless image (under 10 MB) for `linux/amd64` and `linux/arm64`, published to GHCR on each release.
 
 ## Quick start
 
