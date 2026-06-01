@@ -25,8 +25,12 @@ type Client struct {
 	logger *slog.Logger
 }
 
-// New returns a Client for the given bot token.
+// New returns a Client for the given bot token. If logger is nil, the default
+// slog logger is used.
 func New(token string, logger *slog.Logger) *Client {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Client{
 		BaseURL: defaultBaseURL,
 		token:   token,

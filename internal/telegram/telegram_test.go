@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -65,6 +66,36 @@ func TestSendMessageNoButtonWhenURLEmpty(t *testing.T) {
 
 	require.NoError(t, c.SendMessage(t.Context(), "1", "hi", ""))
 	assert.Nil(t, gotReq.ReplyMarkup)
+}
+
+func TestSendMessageRetriesOnTransportError(t *testing.T) {
+	var calls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			// Abort the first request at the transport level so the client
+			// sees a transport error and retries.
+			panic(http.ErrAbortHandler)
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer ts.Close()
+
+	c := New("t", discardLogger())
+	c.BaseURL = ts.URL
+
+	require.NoError(t, c.SendMessage(t.Context(), "1", "hi", ""))
+	assert.Equal(t, int32(2), calls.Load())
+}
+
+func TestSendMessageFailsAfterRetries(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := ts.URL
+	ts.Close() // closed server: every attempt fails at the transport level.
+
+	c := New("t", discardLogger())
+	c.BaseURL = url
+
+	require.Error(t, c.SendMessage(t.Context(), "1", "hi", ""))
 }
 
 func TestSendMessageNon2xxReturnsError(t *testing.T) {
