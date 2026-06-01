@@ -58,7 +58,7 @@ func Parse(contentType string, body []byte) (Payload, error) {
 
 func parseMultipart(boundary string, body []byte) (Payload, error) {
 	if boundary == "" {
-		return Payload{}, fmt.Errorf("parse multipart: missing boundary")
+		return Payload{}, errors.New("parse multipart: missing boundary")
 	}
 	r := multipart.NewReader(bytes.NewReader(body), boundary)
 	var p Payload
@@ -82,6 +82,7 @@ func parseMultipart(boundary string, body []byte) (Payload, error) {
 			})
 			continue
 		}
+		// Unknown fields are ignored so new Superset fields don't break parsing.
 		switch part.FormName() {
 		case "name":
 			p.Name = string(data)
