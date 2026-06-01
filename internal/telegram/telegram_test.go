@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,6 +84,7 @@ func TestSendMessageRetriesOnTransportError(t *testing.T) {
 
 	c := New("t", discardLogger())
 	c.BaseURL = ts.URL
+	c.RetryBackoff = 0 // keep the test fast
 
 	require.NoError(t, c.SendMessage(t.Context(), "1", "hi", ""))
 	assert.Equal(t, int32(2), calls.Load())
@@ -94,8 +97,33 @@ func TestSendMessageFailsAfterRetries(t *testing.T) {
 
 	c := New("t", discardLogger())
 	c.BaseURL = url
+	c.RetryBackoff = 0
 
 	require.Error(t, c.SendMessage(t.Context(), "1", "hi", ""))
+}
+
+func TestSendMessageStopsRetryWhenContextCancelled(t *testing.T) {
+	var calls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		panic(http.ErrAbortHandler) // every attempt fails at the transport level
+	}))
+	defer ts.Close()
+
+	c := New("t", discardLogger())
+	c.BaseURL = ts.URL
+	c.RetryBackoff = 10 * time.Second // long; cancellation must cut the backoff short
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := c.SendMessage(ctx, "1", "hi", "")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Less(t, elapsed, 5*time.Second, "backoff should abort when context is cancelled")
+	assert.Equal(t, int32(1), calls.Load(), "must not retry once the context is cancelled")
 }
 
 func TestSendMessageRedactsTokenOnTransportError(t *testing.T) {
@@ -106,6 +134,7 @@ func TestSendMessageRedactsTokenOnTransportError(t *testing.T) {
 	const token = "super-secret-token"
 	c := New(token, discardLogger())
 	c.BaseURL = baseURL
+	c.RetryBackoff = 0
 
 	err := c.SendMessage(t.Context(), "1", "hi", "")
 	require.Error(t, err)

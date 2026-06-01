@@ -15,12 +15,18 @@ import (
 	"time"
 )
 
-const defaultBaseURL = "https://api.telegram.org"
+const (
+	defaultBaseURL      = "https://api.telegram.org"
+	defaultRetryBackoff = 500 * time.Millisecond
+	maxAttempts         = 2
+)
 
 // Client sends messages to the Telegram Bot API.
 type Client struct {
 	// BaseURL defaults to the public API; override in tests.
 	BaseURL string
+	// RetryBackoff is the delay before retrying a failed transport attempt.
+	RetryBackoff time.Duration
 
 	token  string
 	http   *http.Client
@@ -34,10 +40,11 @@ func New(token string, logger *slog.Logger) *Client {
 		logger = slog.Default()
 	}
 	return &Client{
-		BaseURL: defaultBaseURL,
-		token:   token,
-		http:    &http.Client{Timeout: 10 * time.Second},
-		logger:  logger,
+		BaseURL:      defaultBaseURL,
+		RetryBackoff: defaultRetryBackoff,
+		token:        token,
+		http:         &http.Client{Timeout: 10 * time.Second},
+		logger:       logger,
 	}
 }
 
@@ -63,8 +70,8 @@ type sendMessageRequest struct {
 }
 
 // SendMessage posts a sendMessage call. If buttonURL is non-empty it adds an
-// inline "Open in Superset" button. Transport errors are retried once; an
-// HTTP non-2xx response is returned immediately (not retried).
+// inline "Open in Superset" button. Transport failures are retried (see send);
+// an HTTP non-2xx response is returned immediately.
 func (c *Client) SendMessage(ctx context.Context, chatID, text, buttonURL string) error {
 	body := sendMessageRequest{
 		ChatID:             chatID,
@@ -84,16 +91,23 @@ func (c *Client) SendMessage(ctx context.Context, chatID, text, buttonURL string
 	}
 	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", c.BaseURL, c.token)
 
+	return c.send(ctx, endpoint, payload)
+}
+
+// send posts payload to endpoint, retrying transport failures up to maxAttempts
+// with a fixed RetryBackoff between tries. A non-2xx response is returned
+// immediately (not retried), and retries stop early if ctx is cancelled.
+func (c *Client) send(ctx context.Context, endpoint string, payload []byte) error {
 	var lastErr error
-	for attempt := range 2 {
+	for attempt := range maxAttempts {
+		if attempt > 0 && !sleep(ctx, c.RetryBackoff) {
+			break // context cancelled during backoff
+		}
+
 		status, respBody, err := c.postOnce(ctx, endpoint, payload)
 		if err != nil {
 			lastErr = err
 			c.logger.Warn("telegram request failed", "attempt", attempt, "error", err)
-			// No point retrying if the caller's context is already done.
-			if ctx.Err() != nil {
-				break
-			}
 			continue
 		}
 		if status/100 != 2 {
@@ -101,7 +115,20 @@ func (c *Client) SendMessage(ctx context.Context, chatID, text, buttonURL string
 		}
 		return nil
 	}
-	return fmt.Errorf("telegram sendMessage failed after %d attempt(s): %w", 2, lastErr)
+	return fmt.Errorf("telegram sendMessage failed after %d attempt(s): %w", maxAttempts, lastErr)
+}
+
+// sleep blocks for d or until ctx is done. It returns true if the delay
+// elapsed, false if ctx was cancelled first.
+func sleep(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (c *Client) postOnce(ctx context.Context, endpoint string, payload []byte) (int, []byte, error) {
