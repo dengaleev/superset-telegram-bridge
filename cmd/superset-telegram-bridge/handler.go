@@ -21,6 +21,11 @@ func webhookHandler(tg *telegram.Client, chatID string, logger *slog.Logger) htt
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 		if err != nil {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+				logger.Warn("request body too large", "limit", maxBodyBytes)
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
 			logger.Warn("read request body", "error", err)
 			http.Error(w, "cannot read body", http.StatusBadRequest)
 			return

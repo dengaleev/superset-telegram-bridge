@@ -74,6 +74,20 @@ func TestWebhookMalformedJSON(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestWebhookBodyTooLarge(t *testing.T) {
+	h, hit := newTestHandler(t, http.StatusOK)
+
+	oversized := `{"name":"` + strings.Repeat("x", (1<<20)+1) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(oversized))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	assert.False(t, hit.Load(), "telegram stub should not be called for oversized body")
+}
+
 func TestWebhookTelegramFailure(t *testing.T) {
 	h, _ := newTestHandler(t, http.StatusInternalServerError)
 
