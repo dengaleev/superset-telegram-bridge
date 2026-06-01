@@ -33,3 +33,6 @@ dist/
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Local playground secrets
+playground/.env
