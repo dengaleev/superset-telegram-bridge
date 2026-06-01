@@ -44,8 +44,7 @@ func Handler(tg *telegram.Client, chatID string, logger *slog.Logger) http.Handl
 			return
 		}
 
-		rendered := message.Render(payload)
-		if err := tg.SendMessage(ctx, chatID, rendered.Text, rendered.ButtonURL); err != nil {
+		if err := tg.SendMessage(ctx, chatID, message.Render(payload, message.TextMaxLen)); err != nil {
 			logger.ErrorContext(ctx, "send telegram message", "error", err)
 			http.Error(w, "upstream error", http.StatusBadGateway)
 			return

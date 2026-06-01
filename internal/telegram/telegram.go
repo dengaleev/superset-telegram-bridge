@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -52,70 +53,49 @@ type linkPreviewOptions struct {
 	IsDisabled bool `json:"is_disabled"`
 }
 
-type inlineButton struct {
-	Text string `json:"text"`
-	URL  string `json:"url"`
-}
-
-type replyMarkup struct {
-	InlineKeyboard [][]inlineButton `json:"inline_keyboard"`
-}
-
 type sendMessageRequest struct {
 	ChatID             string             `json:"chat_id"`
 	Text               string             `json:"text"`
 	ParseMode          string             `json:"parse_mode"`
 	LinkPreviewOptions linkPreviewOptions `json:"link_preview_options"`
-	ReplyMarkup        *replyMarkup       `json:"reply_markup,omitempty"`
 }
 
-// SendMessage posts a sendMessage call. If buttonURL is non-empty it adds an
-// inline "Open in Superset" button. Transport failures are retried (see send);
-// an HTTP non-2xx response is returned immediately.
-func (c *Client) SendMessage(ctx context.Context, chatID, text, buttonURL string) error {
-	body := sendMessageRequest{
+// SendMessage posts a plain text message (the "Open in Superset" link lives in
+// the text). Transport failures are retried; a non-2xx is returned immediately.
+func (c *Client) SendMessage(ctx context.Context, chatID, text string) error {
+	payload, err := json.Marshal(sendMessageRequest{
 		ChatID:             chatID,
 		Text:               text,
 		ParseMode:          "HTML",
 		LinkPreviewOptions: linkPreviewOptions{IsDisabled: true},
-	}
-	if buttonURL != "" {
-		body.ReplyMarkup = &replyMarkup{
-			InlineKeyboard: [][]inlineButton{{{Text: "Open in Superset", URL: buttonURL}}},
-		}
-	}
-
-	payload, err := json.Marshal(body)
+	})
 	if err != nil {
 		return fmt.Errorf("marshal sendMessage request: %w", err)
 	}
-	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", c.BaseURL, c.token)
-
-	return c.send(ctx, endpoint, payload)
+	return c.send(ctx, "sendMessage", "application/json", payload)
 }
 
-// send posts payload to endpoint, retrying transport failures up to maxAttempts
-// with a fixed RetryBackoff between tries. A non-2xx response is returned
-// immediately (not retried), and retries stop early if ctx is cancelled.
-func (c *Client) send(ctx context.Context, endpoint string, payload []byte) error {
+// send POSTs body to the given Bot API method, retrying transport failures up to
+// maxAttempts with a fixed RetryBackoff. A non-2xx is returned immediately.
+func (c *Client) send(ctx context.Context, method, contentType string, body []byte) error {
+	endpoint := fmt.Sprintf("%s/bot%s/%s", c.BaseURL, c.token, method)
 	var lastErr error
 	for attempt := range maxAttempts {
 		if attempt > 0 && !sleep(ctx, c.RetryBackoff) {
 			break // context cancelled during backoff
 		}
-
-		status, respBody, err := c.postOnce(ctx, endpoint, payload)
+		status, respBody, err := c.postOnce(ctx, endpoint, contentType, body)
 		if err != nil {
 			lastErr = err
-			c.logger.WarnContext(ctx, "telegram request failed", "attempt", attempt, "error", err)
+			c.logger.WarnContext(ctx, "telegram request failed", "method", method, "attempt", attempt, "error", err)
 			continue
 		}
 		if status/100 != 2 {
-			return fmt.Errorf("telegram sendMessage returned %d: %s", status, respBody)
+			return fmt.Errorf("telegram %s returned %d: %s", method, status, respBody)
 		}
 		return nil
 	}
-	return fmt.Errorf("telegram sendMessage failed after %d attempt(s): %w", maxAttempts, lastErr)
+	return fmt.Errorf("telegram %s failed after %d attempt(s): %w", method, maxAttempts, lastErr)
 }
 
 // sleep blocks for d or until ctx is done. It returns true if the delay
@@ -131,12 +111,12 @@ func sleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func (c *Client) postOnce(ctx context.Context, endpoint string, payload []byte) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+func (c *Client) postOnce(ctx context.Context, endpoint, contentType string, body []byte) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, c.redactToken(err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -151,12 +131,11 @@ func (c *Client) postOnce(ctx context.Context, endpoint string, payload []byte) 
 	return resp.StatusCode, respBody, nil
 }
 
-// redactToken strips the bot token from transport errors. net/http returns a
-// *url.Error whose string embeds the full request URL (including the token),
-// which must never reach logs. The underlying cause is preserved via %w.
+// redactToken removes the bot token from transport errors before they are logged
+// or surfaced (net/http's *url.Error embeds the full request URL).
 func (c *Client) redactToken(err error) error {
 	if ue, ok := errors.AsType[*url.Error](err); ok {
-		return fmt.Errorf("%s %s/bot<redacted>/sendMessage: %w", ue.Op, c.BaseURL, ue.Err)
+		return fmt.Errorf("%s %s: %w", ue.Op, strings.ReplaceAll(ue.URL, c.token, "<redacted>"), ue.Err)
 	}
 	return err
 }

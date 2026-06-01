@@ -8,27 +8,29 @@ import (
 	"github.com/dengaleev/superset-telegram-bridge/internal/superset"
 )
 
-// MaxTextLen is Telegram's sendMessage text limit, in characters.
-const MaxTextLen = 4096
+// Telegram length limits, in characters.
+const (
+	TextMaxLen    = 4096 // sendMessage text
+	CaptionMaxLen = 1024 // media caption
+)
 
-// htmlEscaper escapes only the characters Telegram's HTML parse mode requires.
-var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+// htmlEscaper escapes the characters Telegram's HTML parse mode treats specially,
+// including the double quote so URLs are safe inside an href attribute.
+var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&#34;")
 
-// Rendered is the result of composing a payload: the HTML message body and the
-// URL for the inline "Open in Superset" button (empty if the payload had none).
-type Rendered struct {
-	Text      string
-	ButtonURL string
-}
+// Render composes the HTML body for a payload and appends an "Open in Superset"
+// link (when a URL is present), escaping all user content. The body is truncated
+// first so the link always survives within maxLen characters.
+func Render(p superset.Payload, maxLen int) string {
+	var link string
+	if p.URL != "" {
+		link = "\n\n<a href=\"" + htmlEscaper.Replace(p.URL) + "\">Open in Superset</a>"
+	}
 
-// Render composes the HTML body from a payload, escaping user content and
-// truncating to MaxTextLen characters.
-func Render(p superset.Payload) Rendered {
 	var b strings.Builder
 	b.WriteString("<b>")
 	b.WriteString(htmlEscaper.Replace(p.Name))
 	b.WriteString("</b>")
-
 	if p.Text != "" {
 		b.WriteString("\n\n")
 		b.WriteString(htmlEscaper.Replace(p.Text))
@@ -39,13 +41,14 @@ func Render(p superset.Payload) Rendered {
 		b.WriteString("</i>")
 	}
 
-	return Rendered{
-		Text:      truncate(b.String(), MaxTextLen),
-		ButtonURL: p.URL,
-	}
+	body := truncate(b.String(), maxLen-len([]rune(link)))
+	return body + link
 }
 
 func truncate(s string, limit int) string {
+	if limit < 0 {
+		limit = 0
+	}
 	r := []rune(s)
 	if len(r) <= limit {
 		return s
