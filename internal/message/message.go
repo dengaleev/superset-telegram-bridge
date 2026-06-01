@@ -14,8 +14,8 @@ const (
 	CaptionMaxLen = 1024 // media caption
 )
 
-// htmlEscaper escapes the characters Telegram's HTML parse mode treats specially,
-// including the double quote so URLs are safe inside an href attribute.
+// htmlEscaper escapes the chars Telegram HTML mode needs; the quote keeps URLs
+// safe inside the href attribute.
 var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&#34;")
 
 // Render composes the HTML body for a payload and appends an "Open in Superset"
@@ -46,9 +46,7 @@ func Render(p superset.Payload, maxLen int) string {
 }
 
 func truncate(s string, limit int) string {
-	if limit < 0 {
-		limit = 0
-	}
+	limit = max(limit, 0)
 	r := []rune(s)
 	if len(r) <= limit {
 		return s

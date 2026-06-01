@@ -1,5 +1,6 @@
-// Package telegram is a minimal net/http client for the Telegram Bot API.
-// It is a pure transport: it shapes no payloads beyond the sendMessage envelope.
+// Package telegram is a minimal, dependency-free net/http client for the Telegram
+// Bot API: it builds the sendMessage and media-upload request envelopes and POSTs
+// them, with one-retry transport handling and bot-token redaction on errors.
 package telegram
 
 import (
