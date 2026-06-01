@@ -11,16 +11,23 @@ webhook payload end-to-end.
 3. Wait for `superset-seed` to finish. Within ~60s a Telegram message arrives.
 4. Superset UI: http://localhost:8088 (admin / admin).
 
+## Attachments
+
+Two alerts fire every minute: the original text-only alert (JSON webhook) and a
+CSV alert (`multipart/form-data` carrying `report.csv`, forwarded to Telegram as a
+document). PNG/PDF attachments need a headless browser in the Superset image and
+are intentionally left out to keep the stack light (tier B).
+
 ## Stop the pings
 
-The alert fires every minute. Disable it in **Settings → Alerts & Reports**, or
+The alerts fire every minute. Disable them in **Settings → Alerts & Reports**, or
 `docker compose down`.
 
 ## Inspect the raw payload
 
 `docker compose logs -f bridge` shows each forwarded request.
 
-## Capture the signature (Phase 3)
+## Capture the signature (Phase 4)
 
 Uncomment `WEBHOOK_SECRET` in `superset_config.py` to make Superset add
 `X-Webhook-Signature`; restart to see it on the bridge.
