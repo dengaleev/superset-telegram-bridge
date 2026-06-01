@@ -1,0 +1,10 @@
+with-expecter: true
+packages:
+  github.com/dengaleev/superset-telegram-bridge/internal/webhook:
+    config:
+      dir: "{{.InterfaceDir}}/mocks"
+      outpkg: mocks
+      mockname: "Mock{{.InterfaceName}}"
+      filename: "sender.go"
+    interfaces:
+      Sender:

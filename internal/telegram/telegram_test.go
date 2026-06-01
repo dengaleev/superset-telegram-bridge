@@ -27,12 +27,6 @@ type sentMessage struct {
 	LinkPreviewOptions struct {
 		IsDisabled bool `json:"is_disabled"`
 	} `json:"link_preview_options"`
-	ReplyMarkup *struct {
-		InlineKeyboard [][]struct {
-			Text string `json:"text"`
-			URL  string `json:"url"`
-		} `json:"inline_keyboard"`
-	} `json:"reply_markup"`
 }
 
 func discardLogger() *slog.Logger {
@@ -56,7 +50,7 @@ func TestSendMessageBuildsRequest(t *testing.T) {
 	c := telegram.New("test-token", discardLogger())
 	c.BaseURL = ts.URL
 
-	err := c.SendMessage(t.Context(), "12345", "<b>hi</b>", "https://superset/alert/1")
+	err := c.SendMessage(t.Context(), "12345", "<b>hi</b>")
 	require.NoError(t, err)
 
 	assert.Equal(t, http.MethodPost, gotMethod)
@@ -66,28 +60,6 @@ func TestSendMessageBuildsRequest(t *testing.T) {
 	assert.Equal(t, "<b>hi</b>", gotReq.Text)
 	assert.Equal(t, "HTML", gotReq.ParseMode)
 	assert.True(t, gotReq.LinkPreviewOptions.IsDisabled)
-
-	require.NotNil(t, gotReq.ReplyMarkup)
-	require.NotEmpty(t, gotReq.ReplyMarkup.InlineKeyboard)
-	require.NotEmpty(t, gotReq.ReplyMarkup.InlineKeyboard[0])
-	btn := gotReq.ReplyMarkup.InlineKeyboard[0][0]
-	assert.Equal(t, "Open in Superset", btn.Text)
-	assert.Equal(t, "https://superset/alert/1", btn.URL)
-}
-
-func TestSendMessageNoButtonWhenURLEmpty(t *testing.T) {
-	var gotReq sentMessage
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&gotReq)
-		_, _ = io.WriteString(w, `{"ok":true}`)
-	}))
-	defer ts.Close()
-
-	c := telegram.New("t", discardLogger())
-	c.BaseURL = ts.URL
-
-	require.NoError(t, c.SendMessage(t.Context(), "1", "hi", ""))
-	assert.Nil(t, gotReq.ReplyMarkup)
 }
 
 func TestSendMessageRetriesOnTransportError(t *testing.T) {
@@ -104,7 +76,7 @@ func TestSendMessageRetriesOnTransportError(t *testing.T) {
 	c.BaseURL = ts.URL
 	c.RetryBackoff = 0 // keep the test fast
 
-	require.NoError(t, c.SendMessage(t.Context(), "1", "hi", ""))
+	require.NoError(t, c.SendMessage(t.Context(), "1", "hi"))
 	assert.EqualValues(t, 2, calls.Load())
 }
 
@@ -117,7 +89,7 @@ func TestSendMessageFailsAfterRetries(t *testing.T) {
 	c.BaseURL = url
 	c.RetryBackoff = 0
 
-	require.Error(t, c.SendMessage(t.Context(), "1", "hi", ""))
+	require.Error(t, c.SendMessage(t.Context(), "1", "hi"))
 }
 
 func TestSendMessageStopsRetryWhenContextCancelled(t *testing.T) {
@@ -136,7 +108,7 @@ func TestSendMessageStopsRetryWhenContextCancelled(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	err := c.SendMessage(ctx, "1", "hi", "")
+	err := c.SendMessage(ctx, "1", "hi")
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
@@ -156,10 +128,11 @@ func TestSendMessageRedactsTokenOnTransportError(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	err := c.SendMessage(ctx, "1", "hi", "")
+	err := c.SendMessage(ctx, "1", "hi")
 	require.EqualError(t, err, fmt.Sprintf(
 		"telegram sendMessage failed after 2 attempt(s): Post %s/bot<redacted>/sendMessage: context canceled",
 		ts.URL))
+	require.NotContains(t, err.Error(), "super-secret-token", "raw token must never appear")
 }
 
 func TestSendMessageNon2xxReturnsError(t *testing.T) {
@@ -172,5 +145,5 @@ func TestSendMessageNon2xxReturnsError(t *testing.T) {
 	c := telegram.New("t", discardLogger())
 	c.BaseURL = ts.URL
 
-	require.Error(t, c.SendMessage(t.Context(), "1", "hi", ""))
+	require.Error(t, c.SendMessage(t.Context(), "1", "hi"))
 }
