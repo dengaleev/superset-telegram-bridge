@@ -138,3 +138,11 @@ func TestHandlerTelegramFailure(t *testing.T) {
 	rec := post(h, "application/json", []byte(`{"name":"x"}`))
 	assert.Equal(t, http.StatusBadGateway, rec.Code)
 }
+
+func TestHandlerBodyTooLarge(t *testing.T) {
+	s := &stub{}
+	h := newHandler(t, s)
+	rec := post(h, "application/json", bytes.Repeat([]byte("x"), (50<<20)+1))
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	assert.Empty(t, s.calls())
+}
