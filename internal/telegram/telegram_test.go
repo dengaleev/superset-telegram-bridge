@@ -98,6 +98,21 @@ func TestSendMessageFailsAfterRetries(t *testing.T) {
 	require.Error(t, c.SendMessage(t.Context(), "1", "hi", ""))
 }
 
+func TestSendMessageRedactsTokenOnTransportError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	baseURL := ts.URL
+	ts.Close() // force a transport error
+
+	const token = "super-secret-token"
+	c := New(token, discardLogger())
+	c.BaseURL = baseURL
+
+	err := c.SendMessage(t.Context(), "1", "hi", "")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), token, "bot token must not leak into errors")
+	assert.Contains(t, err.Error(), "<redacted>")
+}
+
 func TestSendMessageNon2xxReturnsError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

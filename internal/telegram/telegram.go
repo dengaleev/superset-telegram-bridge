@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -80,14 +82,18 @@ func (c *Client) SendMessage(ctx context.Context, chatID, text, buttonURL string
 	if err != nil {
 		return fmt.Errorf("marshal sendMessage request: %w", err)
 	}
-	url := fmt.Sprintf("%s/bot%s/sendMessage", c.BaseURL, c.token)
+	endpoint := fmt.Sprintf("%s/bot%s/sendMessage", c.BaseURL, c.token)
 
 	var lastErr error
 	for attempt := range 2 {
-		status, respBody, err := c.postOnce(ctx, url, payload)
+		status, respBody, err := c.postOnce(ctx, endpoint, payload)
 		if err != nil {
 			lastErr = err
 			c.logger.Warn("telegram request failed", "attempt", attempt, "error", err)
+			// No point retrying if the caller's context is already done.
+			if ctx.Err() != nil {
+				break
+			}
 			continue
 		}
 		if status/100 != 2 {
@@ -95,19 +101,19 @@ func (c *Client) SendMessage(ctx context.Context, chatID, text, buttonURL string
 		}
 		return nil
 	}
-	return fmt.Errorf("telegram sendMessage failed after 2 attempts: %w", lastErr)
+	return fmt.Errorf("telegram sendMessage failed after %d attempt(s): %w", 2, lastErr)
 }
 
-func (c *Client) postOnce(ctx context.Context, url string, payload []byte) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+func (c *Client) postOnce(ctx context.Context, endpoint string, payload []byte) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return 0, nil, fmt.Errorf("build request: %w", err)
+		return 0, nil, c.redactToken(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, c.redactToken(err)
 	}
 	defer resp.Body.Close()
 
@@ -116,4 +122,14 @@ func (c *Client) postOnce(ctx context.Context, url string, payload []byte) (int,
 		return 0, nil, fmt.Errorf("read response: %w", err)
 	}
 	return resp.StatusCode, respBody, nil
+}
+
+// redactToken strips the bot token from transport errors. net/http returns a
+// *url.Error whose string embeds the full request URL (including the token),
+// which must never reach logs. The underlying cause is preserved via %w.
+func (c *Client) redactToken(err error) error {
+	if ue, ok := errors.AsType[*url.Error](err); ok {
+		return fmt.Errorf("%s %s/bot<redacted>/sendMessage: %w", ue.Op, c.BaseURL, ue.Err)
+	}
+	return err
 }
