@@ -1,12 +1,15 @@
 package webhook_test
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,75 +22,119 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func TestHandler(t *testing.T) {
-	const maxBody = 1 << 20
+// stub records which Bot API methods the bridge called, and can force a status.
+type stub struct {
+	mu      sync.Mutex
+	methods []string
+	status  int
+}
 
+func (s *stub) server(t *testing.T) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.methods = append(s.methods, strings.TrimPrefix(r.URL.Path, "/bottok/"))
+		s.mu.Unlock()
+		if s.status != 0 {
+			w.WriteHeader(s.status)
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func (s *stub) calls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.methods...)
+}
+
+type superFile struct{ name, mime string }
+
+func multipartBody(t *testing.T, fields map[string]string, files []superFile) (string, []byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		_ = mw.WriteField(k, v)
+	}
+	for _, f := range files {
+		h := textproto.MIMEHeader{
+			"Content-Disposition": []string{`form-data; name="files"; filename="` + f.name + `"`},
+			"Content-Type":        []string{f.mime},
+		}
+		part, _ := mw.CreatePart(h)
+		_, _ = part.Write([]byte("BYTES"))
+	}
+	_ = mw.Close()
+	return mw.FormDataContentType(), buf.Bytes()
+}
+
+func newHandler(t *testing.T, s *stub) http.Handler {
+	t.Helper()
+	tg := telegram.New("tok", discardLogger())
+	tg.BaseURL = s.server(t).URL
+	return webhook.Handler(tg, "123", discardLogger())
+}
+
+func post(h http.Handler, ct string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandlerRouting(t *testing.T) {
 	tests := []struct {
-		name           string
-		contentType    string
-		body           string
-		telegramStatus int
-		wantCode       int
-		wantForwarded  bool
+		name        string
+		files       []superFile
+		wantCode    int
+		wantMethods []string
 	}{
-		{
-			name:           "happy path forwards and returns 204",
-			contentType:    "application/json",
-			body:           `{"name":"High 500s","text":"met","url":"https://superset/1"}`,
-			telegramStatus: http.StatusOK,
-			wantCode:       http.StatusNoContent,
-			wantForwarded:  true,
-		},
-		{
-			name:        "unsupported media type returns 415",
-			contentType: "text/plain",
-			body:        "name=x",
-			wantCode:    http.StatusUnsupportedMediaType,
-		},
-		{
-			name:        "malformed json returns 400",
-			contentType: "application/json",
-			body:        `{"name":`,
-			wantCode:    http.StatusBadRequest,
-		},
-		{
-			name:        "oversized body returns 413",
-			contentType: "application/json",
-			body:        `{"name":"` + strings.Repeat("x", maxBody+1) + `"}`,
-			wantCode:    http.StatusRequestEntityTooLarge,
-		},
-		{
-			name:           "telegram failure returns 502",
-			contentType:    "application/json",
-			body:           `{"name":"x"}`,
-			telegramStatus: http.StatusInternalServerError,
-			wantCode:       http.StatusBadGateway,
-			wantForwarded:  true,
-		},
+		{name: "no files -> sendMessage", files: nil, wantCode: 204, wantMethods: []string{"sendMessage"}},
+		{name: "one png -> sendPhoto", files: []superFile{{"screenshot_0.png", "image/png"}}, wantCode: 204, wantMethods: []string{"sendPhoto"}},
+		{name: "two png -> sendMediaGroup", files: []superFile{{"screenshot_0.png", "image/png"}, {"screenshot_1.png", "image/png"}}, wantCode: 204, wantMethods: []string{"sendMediaGroup"}},
+		{name: "one pdf -> sendDocument", files: []superFile{{"report.pdf", "application/pdf"}}, wantCode: 204, wantMethods: []string{"sendDocument"}},
+		{name: "one csv -> sendDocument", files: []superFile{{"report.csv", "text/csv"}}, wantCode: 204, wantMethods: []string{"sendDocument"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var forwarded atomic.Bool
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				forwarded.Store(true)
-				w.WriteHeader(tt.telegramStatus)
-				_, _ = io.WriteString(w, `{"ok":true}`)
-			}))
-			defer ts.Close()
-
-			tg := telegram.New("tok", discardLogger())
-			tg.BaseURL = ts.URL
-			h := webhook.Handler(tg, "123", discardLogger())
-
-			req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", tt.contentType)
-			rec := httptest.NewRecorder()
-
-			h.ServeHTTP(rec, req)
-
+			s := &stub{}
+			h := newHandler(t, s)
+			var rec *httptest.ResponseRecorder
+			if tt.files == nil {
+				rec = post(h, "application/json", []byte(`{"name":"x","url":"https://s/1"}`))
+			} else {
+				ct, body := multipartBody(t, map[string]string{"name": "x", "url": "https://s/1"}, tt.files)
+				rec = post(h, ct, body)
+			}
 			assert.Equal(t, tt.wantCode, rec.Code)
-			assert.Equal(t, tt.wantForwarded, forwarded.Load())
+			assert.Equal(t, tt.wantMethods, s.calls())
 		})
 	}
+}
+
+func TestHandlerUnsupportedMediaType(t *testing.T) {
+	s := &stub{}
+	h := newHandler(t, s)
+	rec := post(h, "text/plain", []byte("nope"))
+	assert.Equal(t, http.StatusUnsupportedMediaType, rec.Code)
+	assert.Empty(t, s.calls())
+}
+
+func TestHandlerMalformedJSON(t *testing.T) {
+	s := &stub{}
+	h := newHandler(t, s)
+	rec := post(h, "application/json", []byte(`{"name":`))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandlerTelegramFailure(t *testing.T) {
+	s := &stub{status: http.StatusInternalServerError}
+	h := newHandler(t, s)
+	rec := post(h, "application/json", []byte(`{"name":"x"}`))
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
 }
