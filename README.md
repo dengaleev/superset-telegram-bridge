@@ -11,7 +11,18 @@ A single-binary service that forwards [Apache Superset](https://superset.apache.
 Superset can POST notifications to a webhook URL. This bridge receives that webhook, turns it into a Telegram message with an inline "Open in Superset" link, forwards any attachments as photos or documents, and sends it through the Telegram Bot API.
 
 ```
-Superset  ──POST /webhook──▶  superset-telegram-bridge  ──Bot API──▶  Telegram chat
+  Superset alert/report
+      │
+      │  POST /webhook   (JSON, or multipart/form-data with attachments)
+      ▼
+  superset-telegram-bridge
+      │
+      │  Telegram Bot API
+      │      text        → sendMessage   (HTML + "Open in Superset" link)
+      │      PNG         → sendPhoto
+      │      CSV, PDF    → sendDocument
+      ▼
+  Telegram chat
 ```
 
 ## What it does
@@ -93,7 +104,7 @@ Superset doesn't currently restrict which hosts a webhook can target; the open P
 
 ## Local playground
 
-A self-contained Superset + bridge stack lives in [`playground/`](playground/). Seeded alerts fire every minute so you can inspect the real end-to-end payload — including a CSV-attachment alert:
+A self-contained Superset + bridge stack lives in [`playground/`](playground/). Seeded alerts fire every minute — text plus PNG, CSV, and PDF attachments — so you can inspect the real end-to-end payload across every path:
 
 ```bash
 cd playground
