@@ -35,7 +35,6 @@ type Payload struct {
 
 // Parse decodes a Superset webhook body: application/json → text payload,
 // multipart/form-data → fields plus Files; any other type → ErrUnsupportedMediaType.
-// The caller passes the already-read raw body so HMAC verification can hook in later.
 func Parse(contentType string, body []byte) (Payload, error) {
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil {

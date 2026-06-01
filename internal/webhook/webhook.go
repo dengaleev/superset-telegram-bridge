@@ -5,6 +5,7 @@ package webhook
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -27,8 +28,8 @@ type Sender interface {
 	SendMediaGroup(ctx context.Context, chatID, caption, kind string, files []telegram.Media) error
 }
 
-// Handler returns the POST /webhook handler. The raw body is read before parsing
-// so HMAC verification can hook in during Phase 4 without restructuring.
+// Handler returns the POST /webhook handler: it reads the body, parses the
+// Superset payload, and forwards it (text or attachments) to Telegram.
 func Handler(tg Sender, chatID string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -53,6 +54,18 @@ func Handler(tg Sender, chatID string, logger *slog.Logger) http.HandlerFunc {
 			logger.WarnContext(ctx, "parse payload", "error", err)
 			http.Error(w, "invalid payload", http.StatusBadRequest)
 			return
+		}
+
+		// At debug, log what Superset actually sent (the playground runs at this
+		// level); the attachment summary lists names/types/sizes, never raw bytes.
+		if logger.Enabled(ctx, slog.LevelDebug) {
+			files := make([]string, len(payload.Files))
+			for i, f := range payload.Files {
+				files[i] = fmt.Sprintf("%s (%s, %dB)", f.Filename, f.MIME, len(f.Data))
+			}
+			logger.DebugContext(ctx, "received webhook",
+				"content_type", r.Header.Get("Content-Type"),
+				"name", payload.Name, "url", payload.URL, "attachments", files)
 		}
 
 		if err := forward(ctx, tg, chatID, logger, payload); err != nil {

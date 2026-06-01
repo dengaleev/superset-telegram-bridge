@@ -83,5 +83,8 @@ services:
       context: ..
       dockerfile: playground/bridge.dev.Dockerfile
     env_file: .env
+    # Debug logging so `docker compose logs bridge` prints each inbound payload.
+    environment:
+      LOG_LEVEL: debug
     expose:
       - "8080"
