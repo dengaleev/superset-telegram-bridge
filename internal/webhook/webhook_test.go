@@ -40,7 +40,7 @@ func TestHandler(t *testing.T) {
 		},
 		{
 			name:        "unsupported media type returns 415",
-			contentType: "multipart/form-data; boundary=abc",
+			contentType: "text/plain",
 			body:        "name=x",
 			wantCode:    http.StatusUnsupportedMediaType,
 		},
