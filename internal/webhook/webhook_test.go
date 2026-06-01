@@ -2,7 +2,6 @@ package webhook_test
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,69 +13,28 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/dengaleev/superset-telegram-bridge/internal/telegram"
 	"github.com/dengaleev/superset-telegram-bridge/internal/webhook"
+	"github.com/dengaleev/superset-telegram-bridge/internal/webhook/mocks"
 )
+
+const chatID = "123"
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// sentCall records one outbound Telegram call the handler made.
-type sentCall struct {
-	method  string
-	caption string
-	kind    string
-	files   []string // filenames
-}
-
-// fakeSender records calls instead of talking to Telegram; err (if set) is
-// returned by every send to exercise the failure path.
-type fakeSender struct {
-	calls []sentCall
-	err   error
-}
-
-func (f *fakeSender) SendMessage(_ context.Context, _, text string) error {
-	f.calls = append(f.calls, sentCall{method: "sendMessage", caption: text})
-	return f.err
-}
-
-func (f *fakeSender) SendPhoto(_ context.Context, _, caption string, m telegram.Media) error {
-	f.calls = append(f.calls, sentCall{method: "sendPhoto", caption: caption, files: []string{m.Filename}})
-	return f.err
-}
-
-func (f *fakeSender) SendDocument(_ context.Context, _, caption string, m telegram.Media) error {
-	f.calls = append(f.calls, sentCall{method: "sendDocument", caption: caption, files: []string{m.Filename}})
-	return f.err
-}
-
-func (f *fakeSender) SendMediaGroup(_ context.Context, _, caption, kind string, files []telegram.Media) error {
-	names := make([]string, len(files))
-	for i, m := range files {
-		names[i] = m.Filename
-	}
-	f.calls = append(f.calls, sentCall{method: "sendMediaGroup", caption: caption, kind: kind, files: names})
-	return f.err
-}
-
-func (f *fakeSender) methods() []string {
-	out := make([]string, len(f.calls))
-	for i, c := range f.calls {
-		out[i] = c.method
-	}
-	return out
-}
-
 type superFile struct{ name, mime string }
+
+func png(name string) superFile        { return superFile{name, "image/png"} }
+func file(name, mime string) superFile { return superFile{name, mime} }
 
 func pngFiles(n int) []superFile {
 	out := make([]superFile, n)
 	for i := range out {
-		out[i] = superFile{fmt.Sprintf("screenshot_%d.png", i), "image/png"}
+		out[i] = png(fmt.Sprintf("screenshot_%d.png", i))
 	}
 	return out
 }
@@ -99,8 +57,8 @@ func multipartBody(t *testing.T, files []superFile) (string, []byte) {
 	return mw.FormDataContentType(), buf.Bytes()
 }
 
-func post(f *fakeSender, ct string, body []byte) *httptest.ResponseRecorder {
-	h := webhook.Handler(f, "123", discardLogger())
+func post(s webhook.Sender, ct string, body []byte) *httptest.ResponseRecorder {
+	h := webhook.Handler(s, chatID, discardLogger())
 	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
 	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
@@ -108,81 +66,118 @@ func post(f *fakeSender, ct string, body []byte) *httptest.ResponseRecorder {
 	return rec
 }
 
+// postFiles sends a JSON body when files is nil, otherwise a multipart one.
+func postFiles(t *testing.T, s webhook.Sender, files []superFile) *httptest.ResponseRecorder {
+	t.Helper()
+	if files == nil {
+		return post(s, "application/json", []byte(`{"name":"x","url":"https://s/1"}`))
+	}
+	ct, body := multipartBody(t, files)
+	return post(s, ct, body)
+}
+
 func TestHandlerRouting(t *testing.T) {
 	tests := []struct {
-		name        string
-		files       []superFile
-		wantMethods []string
+		name   string
+		files  []superFile
+		expect func(e *mocks.MockSender_Expecter)
 	}{
-		{name: "no files -> sendMessage", files: nil, wantMethods: []string{"sendMessage"}},
-		{name: "one png -> sendPhoto", files: []superFile{{"screenshot_0.png", "image/png"}}, wantMethods: []string{"sendPhoto"}},
-		{name: "two png -> sendMediaGroup", files: pngFiles(2), wantMethods: []string{"sendMediaGroup"}},
-		{name: "one pdf -> sendDocument", files: []superFile{{"report.pdf", "application/pdf"}}, wantMethods: []string{"sendDocument"}},
-		{name: "one csv -> sendDocument", files: []superFile{{"report.csv", "text/csv"}}, wantMethods: []string{"sendDocument"}},
-		{name: "mixed png+pdf -> photo then document", files: []superFile{{"screenshot_0.png", "image/png"}, {"report.pdf", "application/pdf"}}, wantMethods: []string{"sendPhoto", "sendDocument"}},
+		{
+			name:  "no files goes to SendMessage",
+			files: nil,
+			expect: func(e *mocks.MockSender_Expecter) {
+				e.SendMessage(mock.Anything, chatID, mock.Anything).Return(nil).Once()
+			},
+		},
+		{
+			name:  "one png goes to SendPhoto",
+			files: []superFile{png("shot.png")},
+			expect: func(e *mocks.MockSender_Expecter) {
+				e.SendPhoto(mock.Anything, chatID, mock.Anything, mock.Anything).Return(nil).Once()
+			},
+		},
+		{
+			name:  "several png form an album",
+			files: pngFiles(2),
+			expect: func(e *mocks.MockSender_Expecter) {
+				e.SendMediaGroup(mock.Anything, chatID, mock.Anything, "photo", mock.Anything).Return(nil).Once()
+			},
+		},
+		{
+			name:  "one pdf goes to SendDocument",
+			files: []superFile{file("report.pdf", "application/pdf")},
+			expect: func(e *mocks.MockSender_Expecter) {
+				e.SendDocument(mock.Anything, chatID, mock.Anything, mock.Anything).Return(nil).Once()
+			},
+		},
+		{
+			name:  "one csv goes to SendDocument",
+			files: []superFile{file("report.csv", "text/csv")},
+			expect: func(e *mocks.MockSender_Expecter) {
+				e.SendDocument(mock.Anything, chatID, mock.Anything, mock.Anything).Return(nil).Once()
+			},
+		},
+		{
+			name:  "mixed types go to photo and document",
+			files: []superFile{png("shot.png"), file("report.pdf", "application/pdf")},
+			expect: func(e *mocks.MockSender_Expecter) {
+				e.SendPhoto(mock.Anything, chatID, mock.Anything, mock.Anything).Return(nil).Once()
+				e.SendDocument(mock.Anything, chatID, mock.Anything, mock.Anything).Return(nil).Once()
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := &fakeSender{}
-			var rec *httptest.ResponseRecorder
-			if tt.files == nil {
-				rec = post(f, "application/json", []byte(`{"name":"x","url":"https://s/1"}`))
-			} else {
-				ct, body := multipartBody(t, tt.files)
-				rec = post(f, ct, body)
-			}
+			m := mocks.NewMockSender(t) // its cleanup asserts the expected calls happened
+			tt.expect(m.EXPECT())
+
+			rec := postFiles(t, m, tt.files)
+
 			assert.Equal(t, http.StatusNoContent, rec.Code)
-			assert.Equal(t, tt.wantMethods, f.methods())
 		})
 	}
 }
 
 func TestHandlerCaptionOnlyOnFirstGroup(t *testing.T) {
-	f := &fakeSender{}
-	ct, body := multipartBody(t, []superFile{{"screenshot_0.png", "image/png"}, {"report.pdf", "application/pdf"}})
+	m := mocks.NewMockSender(t)
+	nonEmpty := mock.MatchedBy(func(c string) bool { return c != "" })
+	m.EXPECT().SendPhoto(mock.Anything, chatID, nonEmpty, mock.Anything).Return(nil).Once()
+	m.EXPECT().SendDocument(mock.Anything, chatID, "", mock.Anything).Return(nil).Once()
 
-	post(f, ct, body)
-
-	require.Len(t, f.calls, 2)
-	assert.Equal(t, "sendPhoto", f.calls[0].method)
-	assert.NotEmpty(t, f.calls[0].caption, "photo carries the caption")
-	assert.Equal(t, "sendDocument", f.calls[1].method)
-	assert.Empty(t, f.calls[1].caption, "document caption is cleared after photos")
+	postFiles(t, m, []superFile{png("shot.png"), file("report.pdf", "application/pdf")})
 }
 
 func TestHandlerAlbumOverflowDroppedToTen(t *testing.T) {
-	f := &fakeSender{}
-	ct, body := multipartBody(t, pngFiles(11))
+	m := mocks.NewMockSender(t)
+	tenFiles := mock.MatchedBy(func(files []telegram.Media) bool { return len(files) == telegram.MaxMediaGroup })
+	m.EXPECT().SendMediaGroup(mock.Anything, chatID, mock.Anything, "photo", tenFiles).Return(nil).Once()
 
-	post(f, ct, body)
-
-	require.Equal(t, []string{"sendMediaGroup"}, f.methods())
-	assert.Len(t, f.calls[0].files, telegram.MaxMediaGroup, "overflow beyond the album limit is dropped")
-}
-
-func TestHandlerUnsupportedMediaType(t *testing.T) {
-	f := &fakeSender{}
-	rec := post(f, "text/plain", []byte("nope"))
-	assert.Equal(t, http.StatusUnsupportedMediaType, rec.Code)
-	assert.Empty(t, f.calls)
-}
-
-func TestHandlerMalformedJSON(t *testing.T) {
-	f := &fakeSender{}
-	rec := post(f, "application/json", []byte(`{"name":`))
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	postFiles(t, m, pngFiles(11))
 }
 
 func TestHandlerTelegramFailure(t *testing.T) {
-	f := &fakeSender{err: errors.New("boom")}
-	rec := post(f, "application/json", []byte(`{"name":"x"}`))
+	m := mocks.NewMockSender(t)
+	m.EXPECT().SendMessage(mock.Anything, mock.Anything, mock.Anything).Return(errors.New("boom"))
+
+	rec := post(m, "application/json", []byte(`{"name":"x"}`))
 	assert.Equal(t, http.StatusBadGateway, rec.Code)
 }
 
+func TestHandlerUnsupportedMediaType(t *testing.T) {
+	m := mocks.NewMockSender(t) // no expectations: a send here would fail the test
+	rec := post(m, "text/plain", []byte("nope"))
+	assert.Equal(t, http.StatusUnsupportedMediaType, rec.Code)
+}
+
+func TestHandlerMalformedJSON(t *testing.T) {
+	m := mocks.NewMockSender(t)
+	rec := post(m, "application/json", []byte(`{"name":`))
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestHandlerBodyTooLarge(t *testing.T) {
-	f := &fakeSender{}
-	rec := post(f, "application/json", bytes.Repeat([]byte("x"), (50<<20)+1))
+	m := mocks.NewMockSender(t)
+	rec := post(m, "application/json", bytes.Repeat([]byte("x"), (50<<20)+1))
 	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
-	assert.Empty(t, f.calls)
 }
