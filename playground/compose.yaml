@@ -2,7 +2,7 @@ name: superset-telegram-playground
 
 x-superset-common: &superset-common
   image: superset-playground:6.1.0
-  environment: &superset-env
+  environment:
     SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
     SUPERSET_SECRET_KEY: playground-dev-secret-change-me
   volumes:
