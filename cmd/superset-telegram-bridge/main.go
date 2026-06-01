@@ -65,7 +65,7 @@ func run() error {
 	case err := <-serveErr:
 		return fmt.Errorf("server error: %w", err)
 	case <-ctx.Done():
-		logger.Info("shutting down")
+		logger.InfoContext(ctx, "shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)

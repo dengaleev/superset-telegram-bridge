@@ -19,14 +19,15 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 // Superset payload, renders it, and forwards it to Telegram.
 func webhookHandler(tg *telegram.Client, chatID string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 		if err != nil {
 			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-				logger.Warn("request body too large", "limit", maxBodyBytes)
+				logger.WarnContext(ctx, "request body too large", "limit", maxBodyBytes)
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 				return
 			}
-			logger.Warn("read request body", "error", err)
+			logger.WarnContext(ctx, "read request body", "error", err)
 			http.Error(w, "cannot read body", http.StatusBadRequest)
 			return
 		}
@@ -37,14 +38,14 @@ func webhookHandler(tg *telegram.Client, chatID string, logger *slog.Logger) htt
 				http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
 				return
 			}
-			logger.Warn("parse payload", "error", err)
+			logger.WarnContext(ctx, "parse payload", "error", err)
 			http.Error(w, "invalid payload", http.StatusBadRequest)
 			return
 		}
 
 		rendered := message.Render(payload)
-		if err := tg.SendMessage(r.Context(), chatID, rendered.Text, rendered.ButtonURL); err != nil {
-			logger.Error("send telegram message", "error", err)
+		if err := tg.SendMessage(ctx, chatID, rendered.Text, rendered.ButtonURL); err != nil {
+			logger.ErrorContext(ctx, "send telegram message", "error", err)
 			http.Error(w, "upstream error", http.StatusBadGateway)
 			return
 		}

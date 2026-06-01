@@ -107,7 +107,7 @@ func (c *Client) send(ctx context.Context, endpoint string, payload []byte) erro
 		status, respBody, err := c.postOnce(ctx, endpoint, payload)
 		if err != nil {
 			lastErr = err
-			c.logger.Warn("telegram request failed", "attempt", attempt, "error", err)
+			c.logger.WarnContext(ctx, "telegram request failed", "attempt", attempt, "error", err)
 			continue
 		}
 		if status/100 != 2 {
