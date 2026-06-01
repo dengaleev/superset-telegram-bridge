@@ -27,8 +27,8 @@ type Sender interface {
 	SendMediaGroup(ctx context.Context, chatID, caption, kind string, files []telegram.Media) error
 }
 
-// Handler returns the POST /webhook handler. The raw body is read before parsing
-// so HMAC verification can hook in during Phase 4 without restructuring.
+// Handler returns the POST /webhook handler: it reads the body, parses the
+// Superset payload, and forwards it (text or attachments) to Telegram.
 func Handler(tg Sender, chatID string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()

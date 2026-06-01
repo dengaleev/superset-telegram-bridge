@@ -26,8 +26,3 @@ The alerts fire every minute. Disable them in **Settings → Alerts & Reports**,
 ## Inspect the raw payload
 
 `docker compose logs -f bridge` shows each forwarded request.
-
-## Capture the signature (Phase 4)
-
-Uncomment `WEBHOOK_SECRET` in `superset_config.py` to make Superset add
-`X-Webhook-Signature`; restart to see it on the bridge.

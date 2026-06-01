@@ -80,6 +80,17 @@ When a report has attachments, Superset sends `multipart/form-data` instead, and
 - **Caption:** the rendered notification text (the same HTML body, including the **Open in Superset** link) becomes the caption, truncated to Telegram's 1024-character limit with the link always preserved.
 - **Album limit:** Telegram caps albums at 10 items _per kind_; beyond that, the first 10 are forwarded and the rest are dropped with a warning log.
 
+## Security
+
+The bridge has no authentication on `/webhook`; it trusts its network.
+
+- Run it next to Superset — a sidecar or a container on the same private network — and let Superset reach it there (e.g. `http://bridge:8080/webhook`).
+- Don't expose it on a public or shared network.
+
+There's no token/basic-auth option, on purpose: Superset can only put a secret in the webhook URL, which is stored in the alert config and visible to anyone who can edit alerts, so it wouldn't keep anyone out.
+
+Superset doesn't currently restrict which hosts a webhook can target; the open PR [apache/superset#39301](https://github.com/apache/superset/pull/39301) would validate targets and block private ranges.
+
 ## Local playground
 
 A self-contained Superset + bridge stack lives in [`playground/`](playground/). Seeded alerts fire every minute so you can inspect the real end-to-end payload — including a CSV-attachment alert:

@@ -32,6 +32,3 @@ class CeleryConfig:
 
 
 CELERY_CONFIG = CeleryConfig
-
-# Uncomment to make Superset sign the webhook (X-Webhook-Signature) for Phase 4 capture.
-# WEBHOOK_SECRET = "playground-webhook-secret"
