@@ -1,60 +1,40 @@
 package superset
 
 import (
-	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseValidJSON(t *testing.T) {
 	body := []byte(`{"name":"High 500s","text":"condition met","description":"prod","url":"https://superset/alert/1","header":{"k":"v"}}`)
 
 	p, err := Parse("application/json", body)
-	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
-	}
-	if p.Name != "High 500s" {
-		t.Errorf("Name = %q, want %q", p.Name, "High 500s")
-	}
-	if p.Text != "condition met" {
-		t.Errorf("Text = %q, want %q", p.Text, "condition met")
-	}
-	if p.URL != "https://superset/alert/1" {
-		t.Errorf("URL = %q, want %q", p.URL, "https://superset/alert/1")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "High 500s", p.Name)
+	assert.Equal(t, "condition met", p.Text)
+	assert.Equal(t, "prod", p.Description)
+	assert.Equal(t, "https://superset/alert/1", p.URL)
 }
 
 func TestParseJSONWithCharsetParam(t *testing.T) {
-	body := []byte(`{"name":"x"}`)
-
-	if _, err := Parse("application/json; charset=utf-8", body); err != nil {
-		t.Fatalf("Parse() error = %v, want nil for json with charset param", err)
-	}
+	_, err := Parse("application/json; charset=utf-8", []byte(`{"name":"x"}`))
+	require.NoError(t, err)
 }
 
 func TestParseUnsupportedMediaType(t *testing.T) {
-	body := []byte("name=x&text=y")
-
-	_, err := Parse("multipart/form-data; boundary=abc", body)
-	if !errors.Is(err, ErrUnsupportedMediaType) {
-		t.Fatalf("Parse() error = %v, want ErrUnsupportedMediaType", err)
-	}
+	_, err := Parse("multipart/form-data; boundary=abc", []byte("name=x&text=y"))
+	require.ErrorIs(t, err, ErrUnsupportedMediaType)
 }
 
 func TestParseEmptyContentType(t *testing.T) {
 	_, err := Parse("", []byte(`{"name":"x"}`))
-	if !errors.Is(err, ErrUnsupportedMediaType) {
-		t.Fatalf("Parse() error = %v, want ErrUnsupportedMediaType", err)
-	}
+	require.ErrorIs(t, err, ErrUnsupportedMediaType)
 }
 
 func TestParseMalformedJSON(t *testing.T) {
-	body := []byte(`{"name": `)
-
-	_, err := Parse("application/json", body)
-	if err == nil {
-		t.Fatal("Parse() error = nil, want parse error")
-	}
-	if errors.Is(err, ErrUnsupportedMediaType) {
-		t.Fatal("Parse() returned ErrUnsupportedMediaType, want a JSON parse error")
-	}
+	_, err := Parse("application/json", []byte(`{"name": `))
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrUnsupportedMediaType)
 }

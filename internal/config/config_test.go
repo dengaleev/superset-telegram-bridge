@@ -2,8 +2,10 @@ package config
 
 import (
 	"log/slog"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadDefaults(t *testing.T) {
@@ -12,21 +14,11 @@ func TestLoadDefaults(t *testing.T) {
 	// LISTEN_ADDR and LOG_LEVEL unset.
 
 	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.TelegramToken != "tok" {
-		t.Errorf("TelegramToken = %q, want %q", cfg.TelegramToken, "tok")
-	}
-	if cfg.TelegramChatID != "123" {
-		t.Errorf("TelegramChatID = %q, want %q", cfg.TelegramChatID, "123")
-	}
-	if cfg.ListenAddr != ":8080" {
-		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, ":8080")
-	}
-	if cfg.LogLevel != slog.LevelInfo {
-		t.Errorf("LogLevel = %v, want %v", cfg.LogLevel, slog.LevelInfo)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "tok", cfg.TelegramToken)
+	assert.Equal(t, "123", cfg.TelegramChatID)
+	assert.Equal(t, ":8080", cfg.ListenAddr)
+	assert.Equal(t, slog.LevelInfo, cfg.LogLevel)
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -36,15 +28,9 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "debug")
 
 	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if cfg.ListenAddr != ":9000" {
-		t.Errorf("ListenAddr = %q, want %q", cfg.ListenAddr, ":9000")
-	}
-	if cfg.LogLevel != slog.LevelDebug {
-		t.Errorf("LogLevel = %v, want %v", cfg.LogLevel, slog.LevelDebug)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, ":9000", cfg.ListenAddr)
+	assert.Equal(t, slog.LevelDebug, cfg.LogLevel)
 }
 
 func TestLoadMissingRequired(t *testing.T) {
@@ -52,15 +38,10 @@ func TestLoadMissingRequired(t *testing.T) {
 	t.Setenv("TELEGRAM_CHAT_ID", "")
 
 	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() error = nil, want error for missing vars")
-	}
+	require.Error(t, err)
 	// The error must list every missing variable, not just the first.
-	for _, want := range []string{"TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not mention missing var %q", err, want)
-		}
-	}
+	assert.Contains(t, err.Error(), "TELEGRAM_TOKEN")
+	assert.Contains(t, err.Error(), "TELEGRAM_CHAT_ID")
 }
 
 func TestLoadMissingOneRequired(t *testing.T) {
@@ -68,15 +49,9 @@ func TestLoadMissingOneRequired(t *testing.T) {
 	t.Setenv("TELEGRAM_CHAT_ID", "")
 
 	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() error = nil, want error for missing TELEGRAM_CHAT_ID")
-	}
-	if !strings.Contains(err.Error(), "TELEGRAM_CHAT_ID") {
-		t.Errorf("error %q does not mention missing var TELEGRAM_CHAT_ID", err)
-	}
-	if strings.Contains(err.Error(), "TELEGRAM_TOKEN") {
-		t.Errorf("error %q mentions TELEGRAM_TOKEN, which was set", err)
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "TELEGRAM_CHAT_ID")
+	assert.NotContains(t, err.Error(), "TELEGRAM_TOKEN")
 }
 
 func TestLoadInvalidLogLevel(t *testing.T) {
@@ -85,10 +60,6 @@ func TestLoadInvalidLogLevel(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "loud")
 
 	_, err := Load()
-	if err == nil {
-		t.Fatal("Load() error = nil, want error for invalid LOG_LEVEL")
-	}
-	if !strings.Contains(err.Error(), "loud") {
-		t.Errorf("error %q does not mention the invalid value %q", err, "loud")
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "loud")
 }

@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func discardLogger() *slog.Logger {
@@ -31,38 +34,22 @@ func TestSendMessageBuildsRequest(t *testing.T) {
 	c.BaseURL = ts.URL
 
 	err := c.SendMessage(t.Context(), "12345", "<b>hi</b>", "https://superset/alert/1")
-	if err != nil {
-		t.Fatalf("SendMessage() error = %v", err)
-	}
+	require.NoError(t, err)
 
-	if gotMethod != http.MethodPost {
-		t.Errorf("method = %q, want POST", gotMethod)
-	}
-	if gotPath != "/bottest-token/sendMessage" {
-		t.Errorf("path = %q, want %q", gotPath, "/bottest-token/sendMessage")
-	}
-	if gotCT != "application/json" {
-		t.Errorf("content-type = %q, want application/json", gotCT)
-	}
-	if gotReq.ChatID != "12345" {
-		t.Errorf("chat_id = %q, want 12345", gotReq.ChatID)
-	}
-	if gotReq.Text != "<b>hi</b>" {
-		t.Errorf("text = %q, want %q", gotReq.Text, "<b>hi</b>")
-	}
-	if gotReq.ParseMode != "HTML" {
-		t.Errorf("parse_mode = %q, want HTML", gotReq.ParseMode)
-	}
-	if !gotReq.LinkPreviewOptions.IsDisabled {
-		t.Error("link_preview_options.is_disabled = false, want true")
-	}
-	if gotReq.ReplyMarkup == nil {
-		t.Fatal("reply_markup = nil, want inline keyboard")
-	}
+	assert.Equal(t, http.MethodPost, gotMethod)
+	assert.Equal(t, "/bottest-token/sendMessage", gotPath)
+	assert.Equal(t, "application/json", gotCT)
+	assert.Equal(t, "12345", gotReq.ChatID)
+	assert.Equal(t, "<b>hi</b>", gotReq.Text)
+	assert.Equal(t, "HTML", gotReq.ParseMode)
+	assert.True(t, gotReq.LinkPreviewOptions.IsDisabled)
+
+	require.NotNil(t, gotReq.ReplyMarkup)
+	require.NotEmpty(t, gotReq.ReplyMarkup.InlineKeyboard)
+	require.NotEmpty(t, gotReq.ReplyMarkup.InlineKeyboard[0])
 	btn := gotReq.ReplyMarkup.InlineKeyboard[0][0]
-	if btn.URL != "https://superset/alert/1" {
-		t.Errorf("button url = %q, want %q", btn.URL, "https://superset/alert/1")
-	}
+	assert.Equal(t, "Open in Superset", btn.Text)
+	assert.Equal(t, "https://superset/alert/1", btn.URL)
 }
 
 func TestSendMessageNoButtonWhenURLEmpty(t *testing.T) {
@@ -76,12 +63,8 @@ func TestSendMessageNoButtonWhenURLEmpty(t *testing.T) {
 	c := New("t", discardLogger())
 	c.BaseURL = ts.URL
 
-	if err := c.SendMessage(t.Context(), "1", "hi", ""); err != nil {
-		t.Fatalf("SendMessage() error = %v", err)
-	}
-	if gotReq.ReplyMarkup != nil {
-		t.Error("reply_markup set, want nil when button URL empty")
-	}
+	require.NoError(t, c.SendMessage(t.Context(), "1", "hi", ""))
+	assert.Nil(t, gotReq.ReplyMarkup)
 }
 
 func TestSendMessageNon2xxReturnsError(t *testing.T) {
@@ -94,8 +77,5 @@ func TestSendMessageNon2xxReturnsError(t *testing.T) {
 	c := New("t", discardLogger())
 	c.BaseURL = ts.URL
 
-	err := c.SendMessage(t.Context(), "1", "hi", "")
-	if err == nil {
-		t.Fatal("SendMessage() error = nil, want error on non-2xx")
-	}
+	require.Error(t, c.SendMessage(t.Context(), "1", "hi", ""))
 }
