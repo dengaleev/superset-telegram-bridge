@@ -2,6 +2,8 @@ package webhook_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,11 +11,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
-	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/dengaleev/superset-telegram-bridge/internal/telegram"
 	"github.com/dengaleev/superset-telegram-bridge/internal/webhook"
@@ -23,32 +24,51 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// stub records which Bot API methods the bridge called, and can force a status.
-type stub struct {
-	mu      sync.Mutex
-	methods []string
-	status  int
+// sentCall records one outbound Telegram call the handler made.
+type sentCall struct {
+	method  string
+	caption string
+	kind    string
+	files   []string // filenames
 }
 
-func (s *stub) server(t *testing.T) *httptest.Server {
-	t.Helper()
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.mu.Lock()
-		s.methods = append(s.methods, strings.TrimPrefix(r.URL.Path, "/bottok/"))
-		s.mu.Unlock()
-		if s.status != 0 {
-			w.WriteHeader(s.status)
-		}
-		_, _ = io.WriteString(w, `{"ok":true}`)
-	}))
-	t.Cleanup(ts.Close)
-	return ts
+// fakeSender records calls instead of talking to Telegram; err (if set) is
+// returned by every send to exercise the failure path.
+type fakeSender struct {
+	calls []sentCall
+	err   error
 }
 
-func (s *stub) calls() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.methods...)
+func (f *fakeSender) SendMessage(_ context.Context, _, text string) error {
+	f.calls = append(f.calls, sentCall{method: "sendMessage", caption: text})
+	return f.err
+}
+
+func (f *fakeSender) SendPhoto(_ context.Context, _, caption string, m telegram.Media) error {
+	f.calls = append(f.calls, sentCall{method: "sendPhoto", caption: caption, files: []string{m.Filename}})
+	return f.err
+}
+
+func (f *fakeSender) SendDocument(_ context.Context, _, caption string, m telegram.Media) error {
+	f.calls = append(f.calls, sentCall{method: "sendDocument", caption: caption, files: []string{m.Filename}})
+	return f.err
+}
+
+func (f *fakeSender) SendMediaGroup(_ context.Context, _, caption, kind string, files []telegram.Media) error {
+	names := make([]string, len(files))
+	for i, m := range files {
+		names[i] = m.Filename
+	}
+	f.calls = append(f.calls, sentCall{method: "sendMediaGroup", caption: caption, kind: kind, files: names})
+	return f.err
+}
+
+func (f *fakeSender) methods() []string {
+	out := make([]string, len(f.calls))
+	for i, c := range f.calls {
+		out[i] = c.method
+	}
+	return out
 }
 
 type superFile struct{ name, mime string }
@@ -61,13 +81,12 @@ func pngFiles(n int) []superFile {
 	return out
 }
 
-func multipartBody(t *testing.T, fields map[string]string, files []superFile) (string, []byte) {
+func multipartBody(t *testing.T, files []superFile) (string, []byte) {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	for k, v := range fields {
-		_ = mw.WriteField(k, v)
-	}
+	_ = mw.WriteField("name", "x")
+	_ = mw.WriteField("url", "https://s/1")
 	for _, f := range files {
 		h := textproto.MIMEHeader{
 			"Content-Disposition": []string{`form-data; name="files"; filename="` + f.name + `"`},
@@ -80,14 +99,8 @@ func multipartBody(t *testing.T, fields map[string]string, files []superFile) (s
 	return mw.FormDataContentType(), buf.Bytes()
 }
 
-func newHandler(t *testing.T, s *stub) http.Handler {
-	t.Helper()
-	tg := telegram.New("tok", discardLogger())
-	tg.BaseURL = s.server(t).URL
-	return webhook.Handler(tg, "123", discardLogger())
-}
-
-func post(h http.Handler, ct string, body []byte) *httptest.ResponseRecorder {
+func post(f *fakeSender, ct string, body []byte) *httptest.ResponseRecorder {
+	h := webhook.Handler(f, "123", discardLogger())
 	req := httptest.NewRequest(http.MethodPost, "/webhook", bytes.NewReader(body))
 	req.Header.Set("Content-Type", ct)
 	rec := httptest.NewRecorder()
@@ -99,61 +112,77 @@ func TestHandlerRouting(t *testing.T) {
 	tests := []struct {
 		name        string
 		files       []superFile
-		wantCode    int
 		wantMethods []string
 	}{
-		{name: "no files -> sendMessage", files: nil, wantCode: 204, wantMethods: []string{"sendMessage"}},
-		{name: "one png -> sendPhoto", files: []superFile{{"screenshot_0.png", "image/png"}}, wantCode: 204, wantMethods: []string{"sendPhoto"}},
-		{name: "two png -> sendMediaGroup", files: []superFile{{"screenshot_0.png", "image/png"}, {"screenshot_1.png", "image/png"}}, wantCode: 204, wantMethods: []string{"sendMediaGroup"}},
-		{name: "one pdf -> sendDocument", files: []superFile{{"report.pdf", "application/pdf"}}, wantCode: 204, wantMethods: []string{"sendDocument"}},
-		{name: "one csv -> sendDocument", files: []superFile{{"report.csv", "text/csv"}}, wantCode: 204, wantMethods: []string{"sendDocument"}},
-		{name: "mixed png+pdf -> photo then document", files: []superFile{{"screenshot_0.png", "image/png"}, {"report.pdf", "application/pdf"}}, wantCode: 204, wantMethods: []string{"sendPhoto", "sendDocument"}},
-		{name: "eleven png -> single album, overflow dropped", files: pngFiles(11), wantCode: 204, wantMethods: []string{"sendMediaGroup"}},
+		{name: "no files -> sendMessage", files: nil, wantMethods: []string{"sendMessage"}},
+		{name: "one png -> sendPhoto", files: []superFile{{"screenshot_0.png", "image/png"}}, wantMethods: []string{"sendPhoto"}},
+		{name: "two png -> sendMediaGroup", files: pngFiles(2), wantMethods: []string{"sendMediaGroup"}},
+		{name: "one pdf -> sendDocument", files: []superFile{{"report.pdf", "application/pdf"}}, wantMethods: []string{"sendDocument"}},
+		{name: "one csv -> sendDocument", files: []superFile{{"report.csv", "text/csv"}}, wantMethods: []string{"sendDocument"}},
+		{name: "mixed png+pdf -> photo then document", files: []superFile{{"screenshot_0.png", "image/png"}, {"report.pdf", "application/pdf"}}, wantMethods: []string{"sendPhoto", "sendDocument"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &stub{}
-			h := newHandler(t, s)
+			f := &fakeSender{}
 			var rec *httptest.ResponseRecorder
 			if tt.files == nil {
-				rec = post(h, "application/json", []byte(`{"name":"x","url":"https://s/1"}`))
+				rec = post(f, "application/json", []byte(`{"name":"x","url":"https://s/1"}`))
 			} else {
-				ct, body := multipartBody(t, map[string]string{"name": "x", "url": "https://s/1"}, tt.files)
-				rec = post(h, ct, body)
+				ct, body := multipartBody(t, tt.files)
+				rec = post(f, ct, body)
 			}
-			assert.Equal(t, tt.wantCode, rec.Code)
-			assert.Equal(t, tt.wantMethods, s.calls())
+			assert.Equal(t, http.StatusNoContent, rec.Code)
+			assert.Equal(t, tt.wantMethods, f.methods())
 		})
 	}
 }
 
+func TestHandlerCaptionOnlyOnFirstGroup(t *testing.T) {
+	f := &fakeSender{}
+	ct, body := multipartBody(t, []superFile{{"screenshot_0.png", "image/png"}, {"report.pdf", "application/pdf"}})
+
+	post(f, ct, body)
+
+	require.Len(t, f.calls, 2)
+	assert.Equal(t, "sendPhoto", f.calls[0].method)
+	assert.NotEmpty(t, f.calls[0].caption, "photo carries the caption")
+	assert.Equal(t, "sendDocument", f.calls[1].method)
+	assert.Empty(t, f.calls[1].caption, "document caption is cleared after photos")
+}
+
+func TestHandlerAlbumOverflowDroppedToTen(t *testing.T) {
+	f := &fakeSender{}
+	ct, body := multipartBody(t, pngFiles(11))
+
+	post(f, ct, body)
+
+	require.Equal(t, []string{"sendMediaGroup"}, f.methods())
+	assert.Len(t, f.calls[0].files, telegram.MaxMediaGroup, "overflow beyond the album limit is dropped")
+}
+
 func TestHandlerUnsupportedMediaType(t *testing.T) {
-	s := &stub{}
-	h := newHandler(t, s)
-	rec := post(h, "text/plain", []byte("nope"))
+	f := &fakeSender{}
+	rec := post(f, "text/plain", []byte("nope"))
 	assert.Equal(t, http.StatusUnsupportedMediaType, rec.Code)
-	assert.Empty(t, s.calls())
+	assert.Empty(t, f.calls)
 }
 
 func TestHandlerMalformedJSON(t *testing.T) {
-	s := &stub{}
-	h := newHandler(t, s)
-	rec := post(h, "application/json", []byte(`{"name":`))
+	f := &fakeSender{}
+	rec := post(f, "application/json", []byte(`{"name":`))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestHandlerTelegramFailure(t *testing.T) {
-	s := &stub{status: http.StatusInternalServerError}
-	h := newHandler(t, s)
-	rec := post(h, "application/json", []byte(`{"name":"x"}`))
+	f := &fakeSender{err: errors.New("boom")}
+	rec := post(f, "application/json", []byte(`{"name":"x"}`))
 	assert.Equal(t, http.StatusBadGateway, rec.Code)
 }
 
 func TestHandlerBodyTooLarge(t *testing.T) {
-	s := &stub{}
-	h := newHandler(t, s)
-	rec := post(h, "application/json", bytes.Repeat([]byte("x"), (50<<20)+1))
+	f := &fakeSender{}
+	rec := post(f, "application/json", bytes.Repeat([]byte("x"), (50<<20)+1))
 	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
-	assert.Empty(t, s.calls())
+	assert.Empty(t, f.calls)
 }

@@ -18,9 +18,18 @@ import (
 // rejected. Telegram's own per-file limits apply downstream.
 const maxBodyBytes = 50 << 20 // 50 MiB
 
+// Sender is the subset of *telegram.Client the handler needs; an interface so
+// tests can record calls instead of standing up a real client.
+type Sender interface {
+	SendMessage(ctx context.Context, chatID, text string) error
+	SendPhoto(ctx context.Context, chatID, caption string, m telegram.Media) error
+	SendDocument(ctx context.Context, chatID, caption string, m telegram.Media) error
+	SendMediaGroup(ctx context.Context, chatID, caption, kind string, files []telegram.Media) error
+}
+
 // Handler returns the POST /webhook handler. The raw body is read before parsing
 // so HMAC verification can hook in during Phase 4 without restructuring.
-func Handler(tg *telegram.Client, chatID string, logger *slog.Logger) http.HandlerFunc {
+func Handler(tg Sender, chatID string, logger *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
@@ -58,7 +67,7 @@ func Handler(tg *telegram.Client, chatID string, logger *slog.Logger) http.Handl
 // forward sends the payload to Telegram: a plain message when there are no files,
 // otherwise photos (image/png) and documents (everything else) — single sends for
 // one file, albums for several.
-func forward(ctx context.Context, tg *telegram.Client, chatID string, logger *slog.Logger, p superset.Payload) error {
+func forward(ctx context.Context, tg Sender, chatID string, logger *slog.Logger, p superset.Payload) error {
 	if len(p.Files) == 0 {
 		return tg.SendMessage(ctx, chatID, message.Render(p, message.TextMaxLen))
 	}
@@ -91,7 +100,7 @@ func forward(ctx context.Context, tg *telegram.Client, chatID string, logger *sl
 // sendGroup sends one MIME class: a single photo/document, or an album of 2..N.
 // kind is "photo" or "document" (set by the caller's MIME split) and selects the
 // single-send method. Telegram albums cap at MaxMediaGroup, so overflow is dropped.
-func sendGroup(ctx context.Context, tg *telegram.Client, chatID, caption, kind string, files []telegram.Media, logger *slog.Logger) error {
+func sendGroup(ctx context.Context, tg Sender, chatID, caption, kind string, files []telegram.Media, logger *slog.Logger) error {
 	if len(files) > telegram.MaxMediaGroup {
 		logger.WarnContext(ctx, "dropping attachments over Telegram album limit",
 			"kind", kind, "kept", telegram.MaxMediaGroup, "dropped", len(files)-telegram.MaxMediaGroup)
