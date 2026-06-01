@@ -40,6 +40,13 @@ func TestParseUnsupportedMediaType(t *testing.T) {
 	}
 }
 
+func TestParseEmptyContentType(t *testing.T) {
+	_, err := Parse("", []byte(`{"name":"x"}`))
+	if !errors.Is(err, ErrUnsupportedMediaType) {
+		t.Fatalf("Parse() error = %v, want ErrUnsupportedMediaType", err)
+	}
+}
+
 func TestParseMalformedJSON(t *testing.T) {
 	body := []byte(`{"name": `)
 
