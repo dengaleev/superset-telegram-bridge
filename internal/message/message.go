@@ -45,10 +45,10 @@ func Render(p superset.Payload) Rendered {
 	}
 }
 
-func truncate(s string, max int) string {
+func truncate(s string, limit int) string {
 	r := []rune(s)
-	if len(r) <= max {
+	if len(r) <= limit {
 		return s
 	}
-	return string(r[:max])
+	return string(r[:limit])
 }
