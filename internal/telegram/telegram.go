@@ -123,7 +123,7 @@ func (c *Client) postOnce(ctx context.Context, endpoint, contentType string, bod
 	if err != nil {
 		return 0, nil, c.redactToken(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

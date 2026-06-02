@@ -25,6 +25,18 @@ Superset can POST notifications to a webhook URL. This bridge receives that webh
   Telegram chat
 ```
 
+## Contents
+
+- [What it does](#what-it-does)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Endpoints](#endpoints)
+- [Superset setup](#superset-setup)
+- [Security](#security)
+- [Local playground](#local-playground)
+- [Development](#development)
+- [Releasing](#releasing)
+
 ## What it does
 
 - Formats text notifications as HTML Telegram messages — bold title, italic description, an inline "Open in Superset" link, link previews off.
@@ -35,12 +47,32 @@ Superset can POST notifications to a webhook URL. This bridge receives that webh
 
 ## Quick start
 
+With `docker run`:
+
 ```bash
 docker run -d --name superset-bridge \
   -p 8080:8080 \
   -e TELEGRAM_TOKEN="123456:your-bot-token" \
   -e TELEGRAM_CHAT_ID="-1001234567890" \
   ghcr.io/dengaleev/superset-telegram-bridge:latest
+```
+
+Or with Docker Compose (`compose.yaml`):
+
+```yaml
+services:
+  bridge:
+    image: ghcr.io/dengaleev/superset-telegram-bridge:latest
+    ports:
+      - "8080:8080"
+    environment:
+      TELEGRAM_TOKEN: "123456:your-bot-token"
+      TELEGRAM_CHAT_ID: "-1001234567890"
+    restart: unless-stopped
+```
+
+```bash
+docker compose up -d
 ```
 
 Then point a Superset notification at `http://<host>:8080/webhook` (see [Superset setup](#superset-setup)).
@@ -116,14 +148,28 @@ See [`playground/README.md`](playground/README.md) for details.
 
 ## Development
 
-Requires Go 1.26+.
+Requires Go 1.26+. CI runs each of these on every push.
 
 ```bash
 go build ./...
 go vet ./...
 go test ./... -race
-govulncheck ./...      # known-vulnerability scan; CI runs this on every push
+golangci-lint run ./...   # lint + format check; config in .golangci.yml
+govulncheck ./...         # known-vulnerability scan
 ```
+
+Mocks are generated with [mockery](https://vektra.github.io/mockery/) (`mockery`; config in `.mockery.yaml`).
+
+## Releasing
+
+Push a semver tag — GoReleaser builds the binaries and publishes the GitHub
+release (with changelog and checksums) and the GHCR image:
+
+```bash
+git tag -a v1.2.3 -m "v1.2.3" && git push origin v1.2.3
+```
+
+Preview a release locally without publishing: `goreleaser release --snapshot --clean`.
 
 ## License
 

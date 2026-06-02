@@ -131,7 +131,8 @@ func TestSendMessageRedactsTokenOnTransportError(t *testing.T) {
 	err := c.SendMessage(ctx, "1", "hi")
 	require.EqualError(t, err, fmt.Sprintf(
 		"telegram sendMessage failed after 2 attempt(s): Post %s/bot<redacted>/sendMessage: context canceled",
-		ts.URL))
+		ts.URL,
+	))
 	require.NotContains(t, err.Error(), "super-secret-token", "raw token must never appear")
 }
 
