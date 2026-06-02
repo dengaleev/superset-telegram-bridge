@@ -7,6 +7,8 @@ builds:
     binary: superset-telegram-bridge
     env:
       - CGO_ENABLED=0
+    flags:
+      - -trimpath
     goos:
       - linux
     goarch:
@@ -28,7 +30,39 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: "Forwards Apache Superset alert and report notifications to a Telegram chat."
+      org.opencontainers.image.source: "https://github.com/dengaleev/superset-telegram-bridge"
+      org.opencontainers.image.url: "https://github.com/dengaleev/superset-telegram-bridge"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: "MIT"
 
 archives:
   - formats:
       - tar.gz
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "Merge pull request"
+      - "Merge branch"

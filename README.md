@@ -25,6 +25,18 @@ Superset can POST notifications to a webhook URL. This bridge receives that webh
   Telegram chat
 ```
 
+## Contents
+
+- [What it does](#what-it-does)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Endpoints](#endpoints)
+- [Superset setup](#superset-setup)
+- [Security](#security)
+- [Local playground](#local-playground)
+- [Development](#development)
+- [Releasing](#releasing)
+
 ## What it does
 
 - Formats text notifications as HTML Telegram messages — bold title, italic description, an inline "Open in Superset" link, link previews off.
@@ -116,14 +128,22 @@ See [`playground/README.md`](playground/README.md) for details.
 
 ## Development
 
-Requires Go 1.26+.
+Requires Go 1.26+. CI runs each of these on every push.
 
 ```bash
 go build ./...
 go vet ./...
 go test ./... -race
-govulncheck ./...      # known-vulnerability scan; CI runs this on every push
+golangci-lint run ./...   # lint + format check; config in .golangci.yml
+govulncheck ./...         # known-vulnerability scan
 ```
+
+Mocks are generated with [mockery](https://vektra.github.io/mockery/) (`mockery`; config in `.mockery.yaml`).
+
+## Releasing
+
+Releases are cut by pushing a `vX.Y.Z` tag; GoReleaser publishes the GitHub
+release and the GHCR image. See [RELEASING.md](RELEASING.md).
 
 ## License
 

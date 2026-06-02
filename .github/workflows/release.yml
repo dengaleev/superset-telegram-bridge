@@ -9,6 +9,11 @@ permissions:
   contents: write
   packages: write
 
+# Never cancel an in-flight release; a tag should publish exactly once.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
